@@ -26,8 +26,8 @@ class CloudflareBackend(BaseDecisionBackend):
         timeout: float = 30.0,
     ) -> None:
         settings = get_settings()
-        self.account_id = account_id or settings.cloudflare_account_id
-        self.api_token = api_token or settings.cloudflare_api_token
+        self.account_id = account_id if account_id is not None else settings.cloudflare_account_id
+        self.api_token = api_token if api_token is not None else settings.cloudflare_api_token
         self.model = model or settings.cloudflare_model
         self.timeout = timeout
 

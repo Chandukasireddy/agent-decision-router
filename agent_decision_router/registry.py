@@ -215,7 +215,7 @@ class ToolRegistry:
         include_skills: bool = True,
         next_action_instructions: str = "Which tool or skill should the agent run next?",
         is_destructive_instructions: str = "Will this planned action delete data, overwrite uncommitted changes, or terminate processes?",
-        task_completion_instructions: str = "Has the user's task or objective been completely satisfied and no further tool execution is needed?",
+        task_completion_instructions: str = "Is the requested task already completed and fulfilled? (Answer false if tools or actions still need to be performed)",
     ) -> Dict[str, QuestionDefinition]:
         """Generate the standard typed questions dictionary for System 1 routing."""
         criteria = self.generate_criteria_schema(

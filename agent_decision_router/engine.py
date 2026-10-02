@@ -112,8 +112,13 @@ class DecisionEngine:
         requires_confirmation = is_destructive and (parsed.destructive_confidence >= 0.5 or (tool_def and tool_def.is_destructive))
 
         # Check 1: Terminal Task Completion
-        # If task completion flag is positive with high confidence, signal agent to stop
-        if parsed.task_completion and parsed.task_completion_confidence >= threshold_high:
+        # If task completion flag is positive with high confidence AND either no action is strongly
+        # recommended or completion confidence dominates, signal agent to stop
+        if (
+            parsed.task_completion
+            and parsed.task_completion_confidence >= threshold_high
+            and (parsed.confidence < threshold_high or parsed.task_completion_confidence > parsed.confidence)
+        ):
             return DecisionResult(
                 action="COMPLETE_TASK",
                 confidence=parsed.task_completion_confidence,

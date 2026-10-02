@@ -151,7 +151,7 @@ class BaseDecisionBackend(ABC):
             return conf >= 0.5, conf
 
         if isinstance(field_value, dict):
-            # Format: {"noul": true, "confidence": 0.8} or {"value": true, "prob": 0.9}
+            # Format: {"type": "noul", "noul": 0.0061} or {"value": true, "prob": 0.9}
             val = (
                 field_value.get("noul")
                 if "noul" in field_value
@@ -159,13 +159,16 @@ class BaseDecisionBackend(ABC):
             )
             conf = field_value.get("confidence") or field_value.get("prob") or field_value.get("score")
 
+            if isinstance(val, (int, float)):
+                conf_float = max(0.0, min(1.0, float(val)))
+                is_true = conf_float >= 0.5
+                return is_true, conf_float
+
             is_true = False
             if isinstance(val, bool):
                 is_true = val
             elif isinstance(val, str):
                 is_true = val.lower() in ("true", "yes", "1", "positive")
-            elif isinstance(val, (int, float)):
-                is_true = float(val) >= 0.5
 
             conf_float = 0.0
             if conf is not None:
