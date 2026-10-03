@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 from pydantic import BaseModel, Field
 from agent_decision_router.models import DecisionPayload
 
@@ -15,6 +15,34 @@ class ParsedDecision(BaseModel):
     probabilities: Dict[str, float] = Field(
         default_factory=dict,
         description="Probability distribution across candidate criteria"
+    )
+    selected_model: Optional[str] = Field(
+        default=None,
+        description="Public AI model selected by decision router"
+    )
+    model_confidence: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Confidence of model choice"
+    )
+    model_probabilities: Dict[str, float] = Field(
+        default_factory=dict,
+        description="Probability distribution across candidate models"
+    )
+    selected_skill: Optional[str] = Field(
+        default=None,
+        description="Agent skill domain selected by decision router"
+    )
+    skill_confidence: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Confidence of skill choice"
+    )
+    skill_probabilities: Dict[str, float] = Field(
+        default_factory=dict,
+        description="Probability distribution across candidate skills"
     )
     is_destructive: bool = Field(
         default=False,
@@ -55,38 +83,26 @@ class BaseDecisionBackend(ABC):
         """Synchronously query the decision model with state and typed questions."""
         pass
 
-    def parse_systemone_response(
-        self,
-        raw_result: Dict[str, Any],
-        payload: DecisionPayload,
-    ) -> ParsedDecision:
-        """Normalize typical System 1 / Jev / clef-flash JSON responses."""
-        # Result may be nested under 'result' or 'answers'
-        data = raw_result
-        if isinstance(data, dict):
-            if "result" in data and isinstance(data["result"], dict):
-                data = data["result"]
-            if "answers" in data and isinstance(data["answers"], dict):
-                data = data["answers"]
+    def _parse_choice_field(self, field_data: Any) -> Tuple[str, float, Dict[str, float]]:
+        """Parse a Choice question response containing choice, confidence, and probabilities."""
+        if not field_data:
+            return "", 0.0, {}
 
-        # Parse next_tool / next_action choice
-        next_tool_data = data.get("next_tool") or data.get("next_action") or {}
-        selected_action = "unknown"
-        probabilities: Dict[str, float] = {}
+        selected = ""
         confidence = 0.0
+        probabilities: Dict[str, float] = {}
 
-        if isinstance(next_tool_data, dict):
-            # Format: {"choice": "tool_name", "probabilities": {"tool_name": 0.85, ...}}
-            selected_action = (
-                next_tool_data.get("choice")
-                or next_tool_data.get("selected")
-                or next_tool_data.get("answer")
+        if isinstance(field_data, dict):
+            selected = (
+                field_data.get("choice")
+                or field_data.get("selected")
+                or field_data.get("answer")
                 or ""
             )
             raw_probs = (
-                next_tool_data.get("probabilities")
-                or next_tool_data.get("probs")
-                or next_tool_data.get("scores")
+                field_data.get("probabilities")
+                or field_data.get("probs")
+                or field_data.get("scores")
                 or {}
             )
             if isinstance(raw_probs, dict):
@@ -96,41 +112,68 @@ class BaseDecisionBackend(ABC):
                     except (ValueError, TypeError):
                         pass
 
-            if "confidence" in next_tool_data:
+            if "confidence" in field_data:
                 try:
-                    confidence = float(next_tool_data["confidence"])
+                    confidence = float(field_data["confidence"])
                 except (ValueError, TypeError):
                     pass
-        elif isinstance(next_tool_data, str):
-            selected_action = next_tool_data
+        elif isinstance(field_data, str):
+            selected = field_data
 
-        # If confidence wasn't explicit, derive from probabilities
-        if not confidence and probabilities and selected_action in probabilities:
-            confidence = probabilities[selected_action]
+        if not confidence and probabilities and selected in probabilities:
+            confidence = probabilities[selected]
         elif not confidence and probabilities:
             confidence = max(probabilities.values())
-        elif not confidence and selected_action != "unknown":
-            confidence = 0.75  # Default baseline if backend returned bare string
+        elif not confidence and selected:
+            confidence = 0.75
 
-        # Ensure probabilities contains selected action
-        if selected_action and selected_action not in probabilities:
-            probabilities[selected_action] = confidence
+        if selected and selected not in probabilities:
+            probabilities[selected] = confidence
 
-        # Parse is_destructive (noul)
+        if not selected and probabilities:
+            selected = max(probabilities, key=lambda k: probabilities[k])
+            confidence = probabilities[selected]
+
+        return selected, max(0.0, min(1.0, confidence)), probabilities
+
+    def parse_systemone_response(
+        self,
+        raw_result: Dict[str, Any],
+        payload: DecisionPayload,
+    ) -> ParsedDecision:
+        """Normalize typical System 1 / Jev / clef-flash JSON responses."""
+        data = raw_result
+        if isinstance(data, dict):
+            if "result" in data and isinstance(data["result"], dict):
+                data = data["result"]
+            if "answers" in data and isinstance(data["answers"], dict):
+                data = data["answers"]
+
+        action, action_conf, action_probs = self._parse_choice_field(
+            data.get("next_tool") or data.get("next_action")
+        )
+
+        model_choice, model_conf, model_probs = self._parse_choice_field(
+            data.get("model_tier")
+        )
+
+        skill_choice, skill_conf, skill_probs = self._parse_choice_field(
+            data.get("selected_skill")
+        )
+
         is_destructive, dest_conf = self._parse_noul_field(data.get("is_destructive"))
-
-        # Parse task_completion (noul)
         task_completion, comp_conf = self._parse_noul_field(data.get("task_completion"))
 
-        # If selected action is empty or still unknown, pick highest prob key if available
-        if (not selected_action or selected_action == "unknown") and probabilities:
-            selected_action = max(probabilities, key=lambda k: probabilities[k])
-            confidence = probabilities[selected_action]
-
         return ParsedDecision(
-            selected_action=selected_action,
-            confidence=max(0.0, min(1.0, confidence)),
-            probabilities=probabilities,
+            selected_action=action or "unknown",
+            confidence=action_conf,
+            probabilities=action_probs,
+            selected_model=model_choice or None,
+            model_confidence=model_conf if model_choice else None,
+            model_probabilities=model_probs,
+            selected_skill=skill_choice or None,
+            skill_confidence=skill_conf if skill_choice else None,
+            skill_probabilities=skill_probs,
             is_destructive=is_destructive,
             destructive_confidence=dest_conf,
             task_completion=task_completion,
@@ -138,7 +181,7 @@ class BaseDecisionBackend(ABC):
             raw_response=raw_result,
         )
 
-    def _parse_noul_field(self, field_value: Any) -> tuple[bool, float]:
+    def _parse_noul_field(self, field_value: Any) -> Tuple[bool, float]:
         """Extract boolean decision and confidence from a noul response."""
         if field_value is None:
             return False, 0.0
@@ -151,7 +194,6 @@ class BaseDecisionBackend(ABC):
             return conf >= 0.5, conf
 
         if isinstance(field_value, dict):
-            # Format: {"type": "noul", "noul": 0.0061} or {"value": true, "prob": 0.9}
             val = (
                 field_value.get("noul")
                 if "noul" in field_value
