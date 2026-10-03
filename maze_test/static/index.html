@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clef System 1 Maze Runner</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="logo-badge">SYSTEM 1</div>
+        <h1>Clef Maze Decision Visualizer</h1>
+      </div>
+      <div class="header-right">
+        <span class="model-tag">Model: @cf/cloudflare/clef-flash</span>
+        <span class="status-indicator live" id="connection-status">Live Connected</span>
+      </div>
+    </header>
+
+    <!-- Main Grid -->
+    <main class="main-layout">
+      <!-- Left: Maze & Controls -->
+      <section class="maze-section">
+        <div class="card maze-card">
+          <div class="card-header">
+            <h2>Maze Environment</h2>
+            <div class="preset-selector">
+              <label for="preset-select">Layout:</label>
+              <select id="preset-select">
+                <option value="catacomb_trial" selected>The Catacomb Trial (15x13, 17 Dead Ends)</option>
+                <option value="forked_labyrinth">The Forked Labyrinth (17x13, 22 Dead Ends)</option>
+                <option value="grand_sanctum">The Grand Sanctum (19x13, 25 Dead Ends)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="maze-wrapper">
+            <div id="maze-grid" class="maze-grid"></div>
+            <div id="goal-modal" class="goal-modal hidden">
+              <div class="modal-content">
+                <div class="trophy-icon">🏆</div>
+                <h3>GOAL REACHED!</h3>
+                <p id="goal-summary">The Clef System 1 model successfully routed the agent to the destination!</p>
+                <button class="btn btn-primary" id="btn-modal-reset">Play Again</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="controls-toolbar">
+            <button class="btn btn-primary" id="btn-step">
+              <span class="btn-icon">⚡</span> Next Step (Clef Call)
+            </button>
+            <button class="btn btn-secondary" id="btn-autoplay">
+              <span class="btn-icon">▶</span> Auto-Play
+            </button>
+            <button class="btn btn-outline" id="btn-reset">
+              <span class="btn-icon">↺</span> Reset
+            </button>
+            <div class="speed-control">
+              <label for="speed-slider">Speed:</label>
+              <input type="range" id="speed-slider" min="300" max="2000" value="800" step="100">
+              <span id="speed-label">0.8s</span>
+            </div>
+          </div>
+
+          <div class="maze-stats-bar">
+            <div class="stat-item">
+              <span class="stat-label">Steps Taken</span>
+              <span class="stat-val" id="stat-steps">0</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Distance to Goal</span>
+              <span class="stat-val" id="stat-distance">--</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Fast-Path Cache</span>
+              <span class="stat-val highlight" id="stat-cache">0 hits</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Inference Latency</span>
+              <span class="stat-val" id="stat-latency">-- ms</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right: Decision Inspector -->
+      <section class="inspector-section">
+        <div class="card inspector-card">
+          <div class="card-header">
+            <h2>System 1 Decision Inspector</h2>
+            <span class="badge" id="decision-status-badge">READY</span>
+          </div>
+
+          <!-- Chosen Action Banner -->
+          <div class="decision-banner" id="decision-banner">
+            <div class="decision-main">
+              <span class="decision-label">Routed Action</span>
+              <span class="decision-val" id="decision-action">Awaiting Step...</span>
+            </div>
+            <div class="decision-meta">
+              <span class="conf-tag" id="decision-confidence">Conf: --</span>
+              <span class="source-tag" id="decision-source">Source: --</span>
+            </div>
+          </div>
+
+          <!-- Candidate Probabilities -->
+          <div class="inspector-block">
+            <h3>Candidate Move Probabilities (Choice Questions)</h3>
+            <div class="prob-list" id="prob-list">
+              <div class="prob-row">
+                <span class="prob-name">move_north (Up)</span>
+                <div class="prob-bar-bg"><div class="prob-bar-fill" style="width: 0%"></div></div>
+                <span class="prob-num">0.0%</span>
+              </div>
+              <div class="prob-row">
+                <span class="prob-name">move_south (Down)</span>
+                <div class="prob-bar-bg"><div class="prob-bar-fill" style="width: 0%"></div></div>
+                <span class="prob-num">0.0%</span>
+              </div>
+              <div class="prob-row">
+                <span class="prob-name">move_east (Right)</span>
+                <div class="prob-bar-bg"><div class="prob-bar-fill" style="width: 0%"></div></div>
+                <span class="prob-num">0.0%</span>
+              </div>
+              <div class="prob-row">
+                <span class="prob-name">move_west (Left)</span>
+                <div class="prob-bar-bg"><div class="prob-bar-fill" style="width: 0%"></div></div>
+                <span class="prob-num">0.0%</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Safety & Completion Gauges -->
+          <div class="inspector-block gauges-block">
+            <h3>Noul Verification Checks</h3>
+            <div class="gauges-grid">
+              <div class="gauge-box">
+                <span class="gauge-title">Dead-End / Loop Risk</span>
+                <span class="gauge-status safe" id="gauge-hazard">SAFE</span>
+              </div>
+              <div class="gauge-box">
+                <span class="gauge-title">Goal Reached</span>
+                <span class="gauge-status" id="gauge-goal">FALSE</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Live Prompt Accordion -->
+          <div class="inspector-block">
+            <details class="prompt-details">
+              <summary>View Prompt & Criteria Sent to Clef</summary>
+              <pre class="prompt-code" id="prompt-preview">Press "Next Step" to generate sensory grid scan and criteria.</pre>
+            </details>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
