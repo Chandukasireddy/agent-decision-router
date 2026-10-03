@@ -116,6 +116,64 @@ class MockBackend(BaseDecisionBackend):
         total_exp = sum(exp_scores.values())
         probabilities = {k: round(v / total_exp, 4) for k, v in exp_scores.items()}
 
+        # ----------------------------------------------------------------------
+        # Model Selection Heuristics (Public AI Models)
+        # ----------------------------------------------------------------------
+        model_q = payload.questions.get("model_tier")
+        selected_model: Optional[str] = None
+        model_conf: Optional[float] = None
+        model_probs: Dict[str, float] = {}
+        if model_q and model_q.criteria:
+            model_scores: Dict[str, float] = {k: 1.0 for k in model_q.criteria.keys()}
+            if any(k in state_lower for k in ("reason", "math", "algorithm", "race condition", "deadlock", "proof", "logic")):
+                model_scores["deepseek_r1"] = model_scores.get("deepseek_r1", 1.0) + 9.0
+            elif any(k in state_lower for k in ("refactor", "architect", "security", "audit", "complex", "overhaul", "migration")):
+                model_scores["claude_3_5_sonnet"] = model_scores.get("claude_3_5_sonnet", 1.0) + 8.5
+            elif any(k in state_lower for k in ("screenshot", "image", "diagram", "ui", "mockup", "visual", "layout")):
+                model_scores["gpt_4o"] = model_scores.get("gpt_4o", 1.0) + 8.0
+            elif any(k in state_lower for k in ("typo", "greeting", "hello", "format", "simple", "hi", "docstring")):
+                model_scores["claude_3_5_haiku"] = model_scores.get("claude_3_5_haiku", 1.0) + 8.0
+            elif any(k in state_lower for k in ("test", "pytest", "fast", "search", "grep", "iterate", "run")):
+                model_scores["gemini_2_0_flash"] = model_scores.get("gemini_2_0_flash", 1.0) + 7.5
+            else:
+                model_scores["claude_3_5_sonnet"] = model_scores.get("claude_3_5_sonnet", 1.0) + 5.0
+
+            m_max = max(model_scores.values())
+            m_exp = {k: math.exp((v - m_max) / 2.0) for k, v in model_scores.items()}
+            m_total = sum(m_exp.values())
+            model_probs = {k: round(v / m_total, 4) for k, v in m_exp.items()}
+            selected_model = max(model_probs, key=lambda k: model_probs[k])
+            model_conf = model_probs[selected_model]
+
+        # ----------------------------------------------------------------------
+        # Skill Selection Heuristics (Public Domain Skills)
+        # ----------------------------------------------------------------------
+        skill_q = payload.questions.get("selected_skill")
+        selected_skill: Optional[str] = None
+        skill_conf: Optional[float] = None
+        skill_probs: Dict[str, float] = {}
+        if skill_q and skill_q.criteria:
+            skill_scores: Dict[str, float] = {k: 1.0 for k in skill_q.criteria.keys()}
+            if "pytest" in state_lower or ("test" in state_lower and "audit" not in state_lower and "vulnerability" not in state_lower):
+                skill_scores["test_and_verification"] = skill_scores.get("test_and_verification", 1.0) + 9.0
+            elif "security" in state_lower or "auth" in state_lower or "token" in state_lower or "timing" in state_lower:
+                skill_scores["security_and_auth_audit"] = skill_scores.get("security_and_auth_audit", 1.0) + 8.0
+            elif "search" in state_lower or "find" in state_lower or "grep" in state_lower or "where" in state_lower:
+                skill_scores["codebase_navigation"] = skill_scores.get("codebase_navigation", 1.0) + 7.0
+            elif "refactor" in state_lower or "patch" in state_lower or "write" in state_lower:
+                skill_scores["architectural_refactoring"] = skill_scores.get("architectural_refactoring", 1.0) + 7.0
+            elif "terminal" in state_lower or "command" in state_lower or "docker" in state_lower or "install" in state_lower:
+                skill_scores["system_and_devops"] = skill_scores.get("system_and_devops", 1.0) + 7.0
+            elif "clarif" in state_lower or "ambiguous" in state_lower or "question" in state_lower or "confirm" in state_lower:
+                skill_scores["user_consultation"] = skill_scores.get("user_consultation", 1.0) + 8.0
+
+            s_max = max(skill_scores.values())
+            s_exp = {k: math.exp((v - s_max) / 2.0) for k, v in skill_scores.items()}
+            s_total = sum(s_exp.values())
+            skill_probs = {k: round(v / s_total, 4) for k, v in s_exp.items()}
+            selected_skill = max(skill_probs, key=lambda k: skill_probs[k])
+            skill_conf = skill_probs[selected_skill]
+
         selected_action = max(probabilities, key=lambda k: probabilities[k])
         confidence = probabilities[selected_action]
 
@@ -123,6 +181,12 @@ class MockBackend(BaseDecisionBackend):
             selected_action=selected_action,
             confidence=confidence,
             probabilities=probabilities,
+            selected_model=selected_model,
+            model_confidence=model_conf,
+            model_probabilities=model_probs,
+            selected_skill=selected_skill,
+            skill_confidence=skill_conf,
+            skill_probabilities=skill_probs,
             is_destructive=is_destructive,
             destructive_confidence=dest_conf,
             task_completion=is_task_complete,

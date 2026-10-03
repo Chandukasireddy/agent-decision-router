@@ -60,6 +60,21 @@ class SkillDefinition(BaseModel):
     )
 
 
+class ModelTierDefinition(BaseModel):
+    """Definition of an AI model tier with routing criteria."""
+    name: str = Field(..., description="Unique model identifier (e.g. 'claude_3_5_sonnet', 'deepseek_r1')")
+    provider: str = Field(..., description="Model provider (e.g. 'Anthropic', 'DeepSeek', 'OpenAI', 'Google')")
+    description: str = Field(..., description="Human-readable description of model capabilities")
+    criteria: str = Field(..., description="Routing criteria explaining when this model should be selected")
+    context_window: str = Field(default="128k", description="Context window size")
+    cost_tier: str = Field(default="medium", description="Cost tier: ultra_low, low, medium, premium")
+    specialty: str = Field(default="general", description="Primary benchmark specialty")
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Arbitrary metadata"
+    )
+
+
 class QuestionDefinition(BaseModel):
     """Typed question definition sent to the decision model."""
     type: str = Field(..., description="Question type ('choice', 'noul', etc.)")
@@ -75,7 +90,7 @@ class DecisionPayload(BaseModel):
     state: str = Field(..., description="Stringified context and environmental state")
     questions: Dict[str, QuestionDefinition] = Field(
         ...,
-        description="Dictionary of typed questions (next_tool, is_destructive, task_completion)"
+        description="Dictionary of typed questions (model_choice, skill_choice, next_tool, is_destructive, task_completion)"
     )
 
 
@@ -107,6 +122,34 @@ class DecisionResult(BaseModel):
     probabilities: Dict[str, float] = Field(
         default_factory=dict,
         description="Probability distribution across candidate actions"
+    )
+    selected_model: Optional[str] = Field(
+        default=None,
+        description="Recommended AI model (e.g. 'claude_3_5_sonnet', 'deepseek_r1', 'gemini_2_0_flash')"
+    )
+    model_confidence: Optional[float] = Field(
+        default=None,
+        description="Confidence in the model selection"
+    )
+    model_probabilities: Dict[str, float] = Field(
+        default_factory=dict,
+        description="Probability distribution across candidate models"
+    )
+    selected_skill: Optional[str] = Field(
+        default=None,
+        description="High-level skill domain selected for the task"
+    )
+    skill_confidence: Optional[float] = Field(
+        default=None,
+        description="Confidence in skill selection"
+    )
+    skill_probabilities: Dict[str, float] = Field(
+        default_factory=dict,
+        description="Probability distribution across candidate skills"
+    )
+    execution_directive: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Actionable downstream agent dispatch configuration"
     )
     reason: Optional[str] = Field(
         default=None,
@@ -166,7 +209,7 @@ class AgentState(BaseModel):
 
         if self.recent_tools:
             tool_history = []
-            for t in self.recent_tools[-5:]:  # Keep recent 5 tool calls
+            for t in self.recent_tools[-5:]:
                 status = "success" if t.success else f"failed: {t.error}"
                 out_summary = f" (output: {t.output[:100]}...)" if t.output else ""
                 tool_history.append(f"- {t.tool} [{status}]{out_summary}")

@@ -86,6 +86,8 @@ class DecisionEngine:
         questions = self.registry.generate_questions(
             candidate_names=request.candidate_tools,
             include_skills=True,
+            include_models=True,
+            include_skills_question=True,
         )
 
         payload = DecisionPayload(
@@ -94,6 +96,23 @@ class DecisionEngine:
         )
 
         return payload, state_str, criteria_schema
+
+    def _build_execution_directive(
+        self,
+        action: str,
+        selected_model: Optional[str],
+        selected_skill: Optional[str],
+        is_destructive: bool,
+        requires_confirmation: bool,
+    ) -> Dict[str, Any]:
+        """Generate downstream execution directive for agent runtime."""
+        return {
+            "dispatch_model": selected_model or "gemini_2_0_flash",
+            "active_skill": selected_skill or "general",
+            "target_action": action,
+            "sandbox_policy": "APPROVAL_REQUIRED" if requires_confirmation else ("WRITE" if is_destructive else "READ_ONLY"),
+            "autonomous_execution": not requires_confirmation and action not in ("DECLINE", "COMPLETE_TASK"),
+        }
 
     def _evaluate_confidence_gate(
         self,
@@ -111,14 +130,27 @@ class DecisionEngine:
         is_destructive = parsed.is_destructive or (tool_def.is_destructive if tool_def else False)
         requires_confirmation = is_destructive and (parsed.destructive_confidence >= 0.5 or (tool_def and tool_def.is_destructive))
 
+        directive = self._build_execution_directive(
+            action=parsed.selected_action,
+            selected_model=parsed.selected_model,
+            selected_skill=parsed.selected_skill,
+            is_destructive=is_destructive,
+            requires_confirmation=requires_confirmation,
+        )
+
         # Check 1: Terminal Task Completion
-        # If task completion flag is positive with high confidence AND either no action is strongly
-        # recommended or completion confidence dominates, signal agent to stop
         if (
             parsed.task_completion
             and parsed.task_completion_confidence >= threshold_high
             and (parsed.confidence < threshold_high or parsed.task_completion_confidence > parsed.confidence)
         ):
+            complete_directive = self._build_execution_directive(
+                action="COMPLETE_TASK",
+                selected_model=parsed.selected_model,
+                selected_skill=parsed.selected_skill,
+                is_destructive=False,
+                requires_confirmation=False,
+            )
             return DecisionResult(
                 action="COMPLETE_TASK",
                 confidence=parsed.task_completion_confidence,
@@ -127,6 +159,13 @@ class DecisionEngine:
                 task_completion=True,
                 task_completion_confidence=parsed.task_completion_confidence,
                 probabilities=parsed.probabilities,
+                selected_model=parsed.selected_model,
+                model_confidence=parsed.model_confidence,
+                model_probabilities=parsed.model_probabilities,
+                selected_skill=parsed.selected_skill,
+                skill_confidence=parsed.skill_confidence,
+                skill_probabilities=parsed.skill_probabilities,
+                execution_directive=complete_directive,
                 reason="Task objectives fully satisfied. Stopping tool execution.",
                 source="system1",
                 execution_time_ms=elapsed_ms,
@@ -144,6 +183,13 @@ class DecisionEngine:
                 task_completion=parsed.task_completion,
                 task_completion_confidence=parsed.task_completion_confidence,
                 probabilities=parsed.probabilities,
+                selected_model=parsed.selected_model,
+                model_confidence=parsed.model_confidence,
+                model_probabilities=parsed.model_probabilities,
+                selected_skill=parsed.selected_skill,
+                skill_confidence=parsed.skill_confidence,
+                skill_probabilities=parsed.skill_probabilities,
+                execution_directive=directive,
                 reason=f"High confidence ({parsed.confidence:.2f}) tool match.",
                 source="system1",
                 execution_time_ms=elapsed_ms,
@@ -151,15 +197,33 @@ class DecisionEngine:
             )
 
         # Check 3: Medium Confidence (threshold_low <= confidence < threshold_high)
-        # Fallback to shallow lookahead / MCTS heuristic
         if parsed.confidence >= threshold_low:
             lookahead_result = self.lookahead.evaluate(parsed=parsed, state=state)
             lookahead_result.execution_time_ms = round((time.time() - start_time) * 1000, 2)
             lookahead_result.requires_confirmation = requires_confirmation
+            lookahead_result.selected_model = parsed.selected_model
+            lookahead_result.model_confidence = parsed.model_confidence
+            lookahead_result.model_probabilities = parsed.model_probabilities
+            lookahead_result.selected_skill = parsed.selected_skill
+            lookahead_result.skill_confidence = parsed.skill_confidence
+            lookahead_result.skill_probabilities = parsed.skill_probabilities
+            lookahead_result.execution_directive = self._build_execution_directive(
+                action=lookahead_result.action,
+                selected_model=parsed.selected_model,
+                selected_skill=parsed.selected_skill,
+                is_destructive=lookahead_result.is_destructive,
+                requires_confirmation=requires_confirmation,
+            )
             return lookahead_result
 
         # Check 4: Low Confidence (< threshold_low, default 0.40)
-        # Decline execution to avoid hallucinated tool calls
+        decline_directive = self._build_execution_directive(
+            action="DECLINE",
+            selected_model=parsed.selected_model,
+            selected_skill=parsed.selected_skill,
+            is_destructive=is_destructive,
+            requires_confirmation=False,
+        )
         return DecisionResult(
             action="DECLINE",
             confidence=parsed.confidence,
@@ -169,6 +233,13 @@ class DecisionEngine:
             task_completion=parsed.task_completion,
             task_completion_confidence=parsed.task_completion_confidence,
             probabilities=parsed.probabilities,
+            selected_model=parsed.selected_model,
+            model_confidence=parsed.model_confidence,
+            model_probabilities=parsed.model_probabilities,
+            selected_skill=parsed.selected_skill,
+            skill_confidence=parsed.skill_confidence,
+            skill_probabilities=parsed.skill_probabilities,
+            execution_directive=decline_directive,
             reason=f"Refusing weak match: confidence ({parsed.confidence:.2f}) is below threshold ({threshold_low:.2f}) to prevent hallucinated tool calls.",
             source="system1",
             execution_time_ms=elapsed_ms,
